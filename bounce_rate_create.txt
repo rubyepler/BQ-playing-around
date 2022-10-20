@@ -1,0 +1,87 @@
+CREATE or replace TABLE nyt-bigquery-beta-workspace.ruby_data.bounce_rate 
+partition by DATE(_pt) AS
+
+WITH BASE AS(
+  SELECT
+b._pt,
+medium,
+channel,
+source,
+value,
+key,
+user_type,
+case when media_channels is null then 'organic' else media_channels end media_channels
+, case when 
+        dcm_campaign is not null or fb_campaign is not null or search_campaign is not null 
+        or snap_campaign is not null or tw_campaign is not null then coalesce(dcm_campaign, fb_campaign, search_campaign, snap_campaign, tw_campaign) 
+        else null end paid_campaign,
+count(1) pvs,
+count(Case when agent_day_session_pageview_index_inv = 1
+and agent_day_session_pageview_index = 1 AND scroll=0 then 1 end) bounces,
+approx_count_distinct(b.agent_id || session_index) sessions,
+from
+(
+SELECT
+b2._pt,
+pageview.user.user_type,
+    pvs2.pageview.channel,         
+    pvs2.pageview.medium,
+    pvs2.pageview.source,
+    pvs2.pageview.campaign.value,
+    pvs2.pageview.campaign.key,
+    case when pvs2.pageview.campaign.key = 'tafi_id' and pvs2.pageview.source = 'facebook' then 'facebook_tafi'
+     when pvs2.pageview.campaign.key = 'keplerid' and lower(site_dcm) like '%facebook%' then 'facebook_kepler'
+     when pvs2.pageview.campaign.key = 'keplerid' and lower(site_dcm) like '%twitter%' then 'twitter_kepler'
+     when pvs2.pageview.campaign.key = 'keplerid' and lower(site_dcm) like '%snap%' then 'snap_kepler'
+     when pvs2.pageview.campaign.key = 'ds_c' then 'paid_search'
+     when pvs2.pageview.campaign.key = 'gclid' then 'paid_search'
+     when pvs2.pageview.campaign.key = 'keplerid' then 'display_kepler'
+     when pvs2.pageview.campaign.key = 'hs_id' then concat(pvs2.pageview.source,'_hearts')
+     when pvs2.pageview.medium = 'paid' then concat('other_', COALESCE(pvs2.pageview.source, ''))
+     when pvs2.pageview.channel = 'email' and pvs2.pageview.source = 'responsys' then 'email_marketing'
+     else NULL end as media_channels
+    , dcm.campaign as dcm_campaign
+    , fb.campaign as fb_campaign
+    , sa.campaign as search_campaign
+    , snap.campaign as snap_campaign
+    , tw.campaign as tw_campaign
+,b2.agent_id,
+CASE WHEN s.agent_id IS NOT NULL then 1 ELSE 0 END AS scroll,
+pageview.session_index,
+pvs2.pageview.agent_day_session_pageview_index,
+pvs2.pageview.agent_day_session_pageview_index_inv
+FROM nyt-digpipelines-prd.analyst.behavior b2, unnest(b2.pageviews) pvs2
+left join nyt-bigquery-beta-workspace.lara_data.scroll_agentid s
+on b2.agent_id = s.agent_id
+and b2._pt = s._pt
+left join `nyt-bigquery-beta-workspace.referrer.lookup_paid_dcm` dcm ON pvs2.pageview.campaign.value = dcm.placement_id
+left join `nyt-bigquery-beta-workspace.referrer.lookup_paid_search` sa ON pvs2.pageview.campaign.value = sa.ds_c
+left join `nyt-bigquery-beta-workspace.referrer.lookup_paid_snap` snap ON pvs2.pageview.campaign.value = snap.campaign_id
+left join `nyt-bigquery-beta-workspace.referrer.lookup_paid_facebook` fb ON pvs2.pageview.campaign.value = cast(fb.campaign_id as STRING)
+left join `nyt-bigquery-beta-workspace.referrer.lookup_paid_twitter` tw on pvs2.pageview.campaign.value=tw.campaign_id  
+AND b2._pt>='2022-01-01'
+AND pageview.url_without_query LIKE 'https://www.nytimes.com/%'
+AND pageview.url_without_query NOT LIKE 'https://www.nytimes.com/subscription%' --excluding subscription landing pages 
+--100% of content drives to article pages
+--AND pageview.user.user_type='anon'
+--AND pageview.medium='paid'
+) b
+WHERE _pt>='2022-01-01'
+and coalesce(dcm_campaign, fb_campaign, search_campaign, snap_campaign, tw_campaign) is not null
+GROUP BY 1,2,3,4,5,6,7,8,9 
+)
+
+SELECT BASE.*,
+case WHEN paid_campaign Like '%AUC%' then True else null end as auc_campaign,
+CASE
+                WHEN regexp_contains(lower(paid_campaign),'cook') then 'cooking'
+                WHEN regexp_contains(lower(paid_campaign),'ada') then 'ADA'
+                WHEN regexp_contains(lower(paid_campaign),'core|xxxxxx') then 'digi'
+                WHEN regexp_contains(lower(paid_campaign),'audi') then 'audio'
+                WHEN regexp_contains(lower(paid_campaign),'game|cross|xwd') then 'games'
+                WHEN regexp_contains(lower(paid_campaign),'wire|cutter') then 'wirecutter'
+                WHEN regexp_contains(lower(paid_campaign),'home|hd') then 'hd'
+                else null
+                END as product
+FROM BASE
+;
