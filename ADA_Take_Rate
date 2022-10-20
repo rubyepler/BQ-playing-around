@@ -1,0 +1,58 @@
+ 
+create or replace table nyt-bigquery-beta-workspace.ruby_data.ADA_Take_Rate
+partition by Date 
+AS
+
+WITH BASE AS(
+
+SELECT 
+Date,
+t.year,
+t.week,
+t.month,
+REGEXP_REPLACE(SPLIT(pair, ':')[SAFE_OFFSET(0)], r'^"|"$', '') as sor_prod,
+      REGEXP_REPLACE(SPLIT(pair, ':')[SAFE_OFFSET(1)], r'^"|"$', '') value
+FROM `nyt-bigquery-beta-workspace.ruby_data.ADA_Take_Rate_Overall` t,
+UNNEST(SPLIT(REGEXP_REPLACE(to_json_string(t), r'{{|}}', ''))) pair
+)
+
+select 
+  year, 
+  week, 
+  month, 
+  Date,
+ --create product_advertised field
+ case when regexp_contains(lower(sor_prod),'^ada') then 'ADA'
+      when sor_prod like 'All_ADA' then 'ADA'
+      when regexp_contains(lower(sor_prod),'^news') then 'Digi'
+      when sor_prod like 'All_Digi' then 'Digi'
+      when regexp_contains(lower(sor_prod),'^digi') then 'Digi'
+      when regexp_contains(lower(sor_prod),'^hd') then 'HD'
+      when sor_prod like 'All_HD' then 'HD'
+      when regexp_contains(lower(sor_prod),'^games') then 'Games'
+      when regexp_contains(lower(sor_prod),'^cook') then 'Cooking'
+ else null
+ end as product_advertised,
+
+ --create product_purchased fiels
+  case when regexp_contains(lower(sor_prod),'_ada') then 'ADA'
+      when regexp_contains(lower(sor_prod),'_digi') then 'Digi'
+      when regexp_contains(lower(sor_prod),'_hd') then 'HD'
+ else null
+ end as product_purchased,
+
+--create platform field
+  case when regexp_contains(lower(sor_prod),'_sc') then 'SnapChat'
+      when regexp_contains(lower(sor_prod),'_tw') then 'Twitter'
+      when regexp_contains(lower(sor_prod),'fb') then 'Facebook'
+      when regexp_contains(lower(sor_prod),'_display') then 'Display'
+      when regexp_contains(lower(sor_prod),'_search') then 'Search'
+      when regexp_contains(lower(sor_prod),'all') then 'Total'
+ else null
+ end as ad_platform,
+ sum(safe_cast(value as integer)) as starts
+from base
+where sor_prod not in ('{"Year','Day','Week','Date','Month','Quarter')
+group by 1,2,3,4,5,6,7
+
+;
