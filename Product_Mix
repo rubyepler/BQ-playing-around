@@ -1,0 +1,62 @@
+create or replace table nyt-bigquery-beta-workspace.ruby_data.product_spend_starts
+partition by Date 
+AS
+ 
+WITH BASE AS(
+
+SELECT 
+Date,
+t.year,
+t.week,
+t.month,
+REGEXP_REPLACE(SPLIT(pair, ':')[SAFE_OFFSET(0)], r'^"|"$', '') as sor_prod,
+      REGEXP_REPLACE(SPLIT(pair, ':')[SAFE_OFFSET(1)], r'^"|"$', '') value
+FROM `nyt-bigquery-beta-workspace.ruby_data.Product_Spend_Starts_Upload` t,
+UNNEST(SPLIT(REGEXP_REPLACE(to_json_string(t), r'{{|}}', ''))) pair
+)
+
+
+select 
+  year, 
+  week, 
+  month, 
+  Date,
+
+
+--create campaign type field
+ case when regexp_contains(lower(sor_prod),'_conv') then 'conversion'
+      when regexp_contains(lower(sor_prod),'_cont') then 'content'
+      when regexp_contains(lower(sor_prod),'_eng') then 'engagement'
+      else null end
+      as campaign_type,
+
+ --create product_advertised field
+ case when regexp_contains(lower(sor_prod),'^ada') then 'ADA'
+      when regexp_contains(lower(sor_prod),'^digi') then 'Digi'
+      when regexp_contains(lower(sor_prod),'^hd') then 'HD'
+      when regexp_contains(lower(sor_prod),'^games') then 'Games'
+      when regexp_contains(lower(sor_prod),'^cook') then 'Cooking'
+      when regexp_contains(lower(sor_prod),'^wire') then 'Wire_Cutter'
+ else null
+ end as product_advertised,
+
+
+--create spend
+  sum(case when regexp_contains(lower(sor_prod),'spend') 
+     then safe_cast(value as integer) 
+     else null end) as spend,
+
+ --create starts 
+  sum(case when regexp_contains(lower(sor_prod),'start') 
+     then safe_cast(value as integer) 
+     else null end) as starts
+
+from base
+where sor_prod not in ('{"Year','Day','Week','Date','Month','Quarter')
+group by 1,2,3,4,5,6
+
+
+
+
+
+
